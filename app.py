@@ -25,7 +25,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 
-BUILD_ID = "all-in-one-2026-02-08.2"
+
 TZ_NAME = "Australia/Sydney"
 tz = pytz.timezone(TZ_NAME)
 
