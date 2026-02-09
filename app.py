@@ -3041,7 +3041,7 @@ def add_question_to_quiz(canvas_base_url: str, course_id: str, canvas_token: str
 # ===================================================
 st.set_page_config(page_title="Canvas Quiz Uploader", layout="wide")
 st.title("Canvas Quiz Uploader")
-st.caption(f"Build: {BUILD_ID}")
+
 
 
 with st.sidebar:
