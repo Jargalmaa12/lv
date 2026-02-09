@@ -74,6 +74,8 @@ ss_init("questions", [])
 ss_init("parsed_ok", False)
 ss_init("parse_run_id", 0)
 ss_init("last_parser_mode", None)
+ss_init("questions_page_size", 10)
+ss_init("questions_page", 1)
 
 ss_init(
     "details",
@@ -3043,100 +3045,105 @@ st.caption(f"Build: {BUILD_ID}")
 
 
 with st.sidebar:
-    st.header("🔐 Canvas Login (Token)")
-    st.session_state.canvas_base_url = st.text_input("Canvas Base URL", value=st.session_state.canvas_base_url).strip()
-    st.session_state.canvas_token = st.text_input("Canvas Access Token", value=st.session_state.canvas_token, type="password")
+    login_expanded = not bool(st.session_state.logged_in)
+    course_expanded = bool(st.session_state.logged_in) and not bool(st.session_state.selected_course_id)
+    parser_expanded = True
 
-    c_login, c_logout = st.columns(2)
-    if c_login.button("Login"):
-        try:
-            me = canvas_whoami(st.session_state.canvas_base_url, st.session_state.canvas_token)
-            if me:
-                st.session_state.logged_in = True
-                st.session_state.me = me
-                st.session_state.courses_cache = None
-                st.success(f"Logged in as: {me.get('name', 'Unknown')}")
-            else:
+    with st.expander("🔐 Login", expanded=login_expanded):
+        st.session_state.canvas_base_url = st.text_input("Canvas Base URL", value=st.session_state.canvas_base_url).strip()
+        st.session_state.canvas_token = st.text_input("Canvas Access Token", value=st.session_state.canvas_token, type="password")
+        c_login, c_logout = st.columns(2)
+        if c_login.button("Login", use_container_width=True):
+            try:
+                me = canvas_whoami(st.session_state.canvas_base_url, st.session_state.canvas_token)
+                if me:
+                    st.session_state.logged_in = True
+                    st.session_state.me = me
+                    st.session_state.courses_cache = None
+                else:
+                    st.session_state.logged_in = False
+                    st.session_state.me = None
+                    st.error("Login failed: token invalid/expired.")
+            except Exception as e:
                 st.session_state.logged_in = False
                 st.session_state.me = None
-                st.error("Login failed: token invalid/expired.")
-        except Exception as e:
+                st.error(f"Login failed: {e}")
+
+        if c_logout.button("Logout", use_container_width=True):
             st.session_state.logged_in = False
             st.session_state.me = None
-            st.error(f"Login failed: {e}")
+            st.session_state.selected_course_id = None
+            st.session_state.courses_cache = None
+            st.session_state.questions = []
+            st.session_state.parsed_ok = False
 
-    if c_logout.button("Logout"):
-        st.session_state.logged_in = False
-        st.session_state.me = None
-        st.session_state.selected_course_id = None
-        st.session_state.courses_cache = None
-        st.session_state.questions = []
-        st.session_state.parsed_ok = False
-        st.info("Logged out.")
+        if st.session_state.logged_in and st.session_state.me:
+            st.caption(f"User: {st.session_state.me.get('name','')}")
+        else:
+            st.caption("Token login only.")
 
-    if st.session_state.logged_in and st.session_state.me:
-        st.caption(f"User: {st.session_state.me.get('name','')}")
+    with st.expander("✅ Course", expanded=course_expanded):
+        if not st.session_state.logged_in:
+            st.info("Login first to load courses.")
+        else:
+            try:
+                if st.session_state.courses_cache is None:
+                    st.session_state.courses_cache = list_courses(st.session_state.canvas_base_url, st.session_state.canvas_token)
+                courses = st.session_state.courses_cache or []
+                if not courses:
+                    st.warning("No courses visible to this token.")
+                else:
+                    label_to_id = {}
+                    labels = []
+                    for c in courses:
+                        cid = c.get("id")
+                        name = (c.get("name") or c.get("course_code") or f"Course {cid}").strip()
+                        label = f"{name} (ID: {cid})"
+                        labels.append(label)
+                        label_to_id[label] = str(cid)
 
-    st.divider()
-    if st.session_state.logged_in:
-        st.subheader("✅ Course")
-        try:
-            if st.session_state.courses_cache is None:
-                st.session_state.courses_cache = list_courses(st.session_state.canvas_base_url, st.session_state.canvas_token)
-            courses = st.session_state.courses_cache or []
-            if not courses:
-                st.warning("No courses visible to this token.")
-            else:
-                label_to_id = {}
-                labels = []
-                for c in courses:
-                    cid = c.get("id")
-                    name = (c.get("name") or c.get("course_code") or f"Course {cid}").strip()
-                    label = f"{name} (ID: {cid})"
-                    labels.append(label)
-                    label_to_id[label] = str(cid)
+                    default_index = 0
+                    if st.session_state.selected_course_id:
+                        for i, lb in enumerate(labels):
+                            if label_to_id[lb] == st.session_state.selected_course_id:
+                                default_index = i
+                                break
+                    chosen = st.selectbox("Select course", labels, index=default_index)
+                    st.session_state.selected_course_id = label_to_id[chosen]
 
-                default_index = 0
-                if st.session_state.selected_course_id:
-                    for i, lb in enumerate(labels):
-                        if label_to_id[lb] == st.session_state.selected_course_id:
-                            default_index = i
-                            break
-                chosen = st.selectbox("Select course", labels, index=default_index)
-                st.session_state.selected_course_id = label_to_id[chosen]
-        except Exception as e:
-            st.error(f"Failed to load courses: {e}")
-    else:
-        st.info("Login first to select course and upload.")
+                    if st.button("Refresh courses", use_container_width=True):
+                        st.session_state.courses_cache = None
+                        st.rerun()
+            except Exception as e:
+                st.error(f"Failed to load courses: {e}")
 
-    st.divider()
-    st.header("Parser")
-    parser_mode = st.selectbox(
-        "Version",
-        [
-            "v1 (app (1).py, rule-based)",
-            "v2 (canvascersion2.py, rule-based)",
-            "v3 (ai 43.py, AI+fallback)",
-        ],
-        index=0,
-    )
-    prev_mode = st.session_state.last_parser_mode
-    if prev_mode is None:
-        st.session_state.last_parser_mode = parser_mode
-    elif prev_mode != parser_mode:
-        # Switching parsers should not keep/merge previous parsed results.
-        st.session_state.last_parser_mode = parser_mode
-        st.session_state.questions = []
-        st.session_state.parsed_ok = False
-        st.session_state.description_html = ""
-        st.session_state.docx_filename = None
-        st.session_state.parse_run_id += 1
-        # Keep quiz settings, login, and course selection.
-        st.rerun()
-    if parser_mode.startswith("v3"):
-        st.session_state.openai_api_key = st.text_input("OpenAI API key", value=st.session_state.openai_api_key, type="password")
-        st.session_state.openai_model = st.text_input("Model", value=st.session_state.openai_model)
-        st.session_state.openai_base_url = st.text_input("Base URL", value=st.session_state.openai_base_url)
+    with st.expander("Parser", expanded=parser_expanded):
+        parser_mode = st.selectbox(
+            "Version",
+            [
+                "v1 (rule-based)",
+                "v2 (rule-based)",
+                "v3 (AI-hybrid)",
+            ],
+            index=0,
+        )
+        prev_mode = st.session_state.last_parser_mode
+        if prev_mode is None:
+            st.session_state.last_parser_mode = parser_mode
+        elif prev_mode != parser_mode:
+            # Switching parsers should not keep/merge previous parsed results.
+            st.session_state.last_parser_mode = parser_mode
+            st.session_state.questions = []
+            st.session_state.parsed_ok = False
+            st.session_state.description_html = ""
+            st.session_state.docx_filename = None
+            st.session_state.parse_run_id += 1
+            # Keep quiz settings, login, and course selection.
+            st.rerun()
+        if parser_mode.startswith("v3"):
+            st.session_state.openai_api_key = st.text_input("OpenAI API key", value=st.session_state.openai_api_key, type="password")
+            st.session_state.openai_model = st.text_input("Model", value=st.session_state.openai_model)
+            st.session_state.openai_base_url = st.text_input("Base URL", value=st.session_state.openai_base_url)
 
 
 if not st.session_state.logged_in:
@@ -3153,7 +3160,7 @@ canvas_token = st.session_state.canvas_token
 
 
 st.subheader("1) Upload DOCX and Parse")
-uploaded = st.file_uploader("📤 Upload DOCX assessment file", type=["docx"])
+uploaded = st.file_uploader("DOCX", type=["docx"], label_visibility="collapsed")
 
 c_parse1, c_parse2 = st.columns([1, 1])
 parse_btn = c_parse1.button("Parse", type="primary", use_container_width=True)
@@ -3900,11 +3907,16 @@ st.session_state.details = d
 st.divider()
 st.subheader("3) Questions")
 
-colp1, colp2 = st.columns([1, 1])
-page_size = colp1.selectbox("Questions per page", [5, 10, 15, 20, 30], index=1)
+page_size = int(st.session_state.get("questions_page_size") or 10)
+if page_size not in {5, 10, 15, 20, 30}:
+    page_size = 10
 total = len(questions)
 total_pages = max(1, math.ceil(total / page_size))
-page = colp2.number_input("Page", min_value=1, max_value=total_pages, value=1, step=1)
+page = int(st.session_state.get("questions_page") or 1)
+if page < 1:
+    page = 1
+if page > total_pages:
+    page = total_pages
 
 start = (page - 1) * page_size
 end = min(start + page_size, total)
@@ -3979,6 +3991,35 @@ for i in range(start, end):
 
 edited = dedupe_questions(edited)
 st.session_state.questions = edited
+
+# Pager (bottom): avoids needing to scroll back up after reviewing questions.
+st.divider()
+pc1, pc2 = st.columns([0.55, 0.45])
+new_page_size = pc1.selectbox(
+    "Questions per page",
+    [5, 10, 15, 20, 30],
+    index=[5, 10, 15, 20, 30].index(page_size),
+)
+new_total_pages = max(1, math.ceil(total / int(new_page_size)))
+
+if new_total_pages <= 200:
+    new_page = pc2.selectbox(
+        "Page",
+        list(range(1, new_total_pages + 1)),
+        index=max(0, min(page, new_total_pages) - 1),
+        format_func=lambda n: f"{n} / {new_total_pages}",
+    )
+else:
+    new_page = pc2.number_input(
+        "Page",
+        min_value=1,
+        max_value=new_total_pages,
+        value=min(page, new_total_pages),
+        step=1,
+    )
+
+st.session_state.questions_page_size = int(new_page_size)
+st.session_state.questions_page = int(new_page)
 
 st.divider()
 st.subheader("4) Save to Canvas")
